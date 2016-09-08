@@ -30,8 +30,60 @@
 
 ;;; Code:
 
+(require 'popup)
+
 (defvar netspeak-base-url "http://api.netspeak.org/netspeak3/search"
   "Netspeak API base URL.")
+
+(defvar netspeak-menu nil
+  "Popup menu for suggestions.")
+
+(defvar netspeak-completing-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "\t" 'ac-expand)
+    (define-key map [tab] 'ac-expand)
+    (define-key map "\r" 'ac-complete)
+    (define-key map [return] 'ac-complete)
+    (define-key map (kbd "M-TAB") 'auto-complete)
+    ;; (define-key map "\C-s" 'ac-isearch)
+
+    (define-key map "\M-n" 'netspeak-next-candidate)
+    (define-key map "\M-p" 'netspeak-previous-candidate)
+    (define-key map [down] 'netspeak-next-candidate)
+    (define-key map [up] ''netspeak-previous-candidate)
+
+    ;; (define-key map [f1] 'ac-help)
+    ;; (define-key map [M-f1] 'ac-persist-help)
+    ;; (define-key map (kbd "C-?") 'ac-help)
+    ;; (define-key map (kbd "C-M-?") 'ac-persist-help)
+
+    ;; (define-key map [C-down] 'ac-quick-help-scroll-down)
+    ;; (define-key map [C-up] 'ac-quick-help-scroll-up)
+    ;; (define-key map "\C-\M-n" 'ac-quick-help-scroll-down)
+    ;; (define-key map "\C-\M-p" 'ac-quick-help-scroll-up)
+
+    ;; (dotimes (i 9)
+    ;;   (let ((symbol (intern (format "ac-complete-%d" (1+ i)))))
+    ;;     (fset symbol
+    ;;           `(lambda ()
+    ;;              (interactive)
+    ;;              (when (and (ac-menu-live-p) (popup-select ac-menu ,i))
+    ;;                (ac-complete))))
+    ;;     (define-key map (read-kbd-macro (format "M-%s" (1+ i))) symbol)))
+
+    map)
+  "Keymap for completion.")
+
+(defvar netspeak-candidates-list '()
+  "Candidate list for auto completion.")
+
+(defvar ac-source-netspeak nil
+  ;; '((candidates . netspeak-candidates)
+  ;;   (requires . 0))
+  "auto-complete source.")
+
+(defun netspeak-candidates ()
+  netspeak-candidates-list)
 
 (defun netspeak--trim-string (string)
   "Remove whitespaces in beginning and ending of STRING.
@@ -118,6 +170,149 @@ point."
           (insert "(no suggestions found)")
         (insert response)))))        
 
+(defun netspeak-popup ()
+  (interactive)
+  (let* ((region-beg (region-beginning))
+         (region-end (region-end))
+         (region-text (when (use-region-p)
+                        (buffer-substring-no-properties region-beg
+                                                        region-end)))
+         (symbol-pos nil)
+         (menu nil)
+         (menu2 nil)
+         (menu3 nil)
+         (prefix "")
+         (text-with-pattern "")
+         (candidates '())
+         (response nil))
+    (goto-char region-beg)
+    (setq symbol-pos (search-forward "?" region-end t))
+    (when (null symbol-pos)
+      (goto-char region-beg)
+      (setq symbol-pos (search-forward "*" region-end t)))
+
+    (deactivate-mark)
+    (goto-char symbol-pos)
+
+    (setq text-with-pattern
+          (with-temp-buffer
+            (insert region-text)
+            (goto-char (point-min))
+            (while (search-forward "." nil t)
+              (replace-match ""))
+            (goto-char (point-min))
+            (while (search-forward "?" nil t)               
+              (delete-backward-char 1)
+              (insert "\\(.+\\)"))
+            (goto-char (point-min))
+            (when (search-forward "*" nil t)               
+              (delete-backward-char 1)
+              (insert "\\(.+\\)"))
+            (goto-char (point-min))
+            (while (search-forward "..." nil t)
+              (insert "\\(.+\\)"))
+            (goto-char (point-min))
+            (while (search-forward "[" nil t)
+              (let ((open-point (- (point) 1)))
+                (when (search-forward "]" nil t)
+                  (delete-region open-point (point))
+                  (insert "\\(.+\\)"))))
+            (goto-char (point-min))
+            (while (search-forward "{" nil t)
+              (let ((open-point (- (point) 1)))
+                (when (search-forward "}" nil t)
+                  (delete-region open-point (point))
+                  (insert "\\(.+\\)"))))
+              (buffer-string)))
+
+          (setq netspeak-candidates-list '())
+          ;; (setq response (netspeak--request region-text))
+          (setq candidates
+                (split-string
+                 (netspeak--request region-text) "\n"))
+
+          (dolist (candidate candidates)
+            (with-temp-buffer
+              (erase-buffer)
+              (insert candidate)
+              (goto-char (point-min))
+              (when (re-search-forward text-with-pattern nil t)
+                (add-to-list 'netspeak-candidates-list (match-string 1)))))
+
+          (delete-backward-char 1)
+
+          (setq prefix
+                (concat (buffer-substring-no-properties (- (point) 5) (- (point) 1))
+                        "\\(.*\\)"))
+
+           (setq ac-source-netspeak
+                `((candidates . netspeak-candidates-list)
+                  ;; (prefix . ,prefix)
+                  (requires . 0)))
+
+          (setq ac-sources '(ac-source-netspeak))
+          (setq ac-trigger-key "SPC")
+
+          ;; (delete-backward-char 1)
+          ;; (execute-kbd-macro " ")
+          (ac-trigger-key-command t)
+          ;; (execute-kbd-macro " ")
+          ))
+
+
+(defun netspeak--menu-create (point width height)
+  (setq netspeak-menu
+        (popup-create point width height
+                      :around t
+                      ;; :face 'ac-candidate-face
+                      ;; :mouse-face 'ac-candidate-mouse-face
+                      ;; :selection-face 'ac-selection-face
+                      :symbol t
+                      :scroll-bar t
+                      :margin-left 1
+                      :keymap netspeak-completing-map ; for mouse bindings
+                      )))
+
+(defun netspeak-next-candidate ()
+  "Select next candidate."
+  (interactive)
+  (when (netspeak-menu-live-p)
+    (popup-next netspeak-menu)
+    (setq netspeak-show-menu t)))
+    ;; (if (eq this-command 'netspeak-next-candidate)
+    ;;     (setq ac-dwim-enable t))))
+
+(defun netspeak-previous-candidate ()
+  "Select previous candidate."
+  (interactive)
+  (when (netspeak-menu-live-p)
+    (popup-previous netspeak-menu)
+    (setq netspeak-show-menu t)))
+    ;; (if (eq this-command 'netspeak-previous-candidate)
+    ;;     (setq ac-dwim-enable t))))
+
+(defun netspeak-update-candidates (cursor scroll-top)
+  "Update candidates of menu to `ac-candidates' and redraw it."
+  (setf (popup-cursor ac-menu) cursor
+        (popup-scroll-top ac-menu) scroll-top)
+  (setq ac-dwim-enable (= (length ac-candidates) 1))
+  (if ac-candidates
+      (progn
+        (setq ac-completing t)
+        (ac-activate-completing-map))
+    (setq ac-completing nil)
+    (ac-deactivate-completing-map))
+  (ac-inline-update)
+  (popup-set-list ac-menu ac-candidates)
+  (if (and (not ac-fuzzy-enable)
+           (<= (length ac-candidates) 1))
+      (popup-hide ac-menu)
+    (if ac-show-menu
+        (popup-draw ac-menu))))
+
+(defun netspeak-delete-menu ()
+  (interactive)
+  (popup-delete netspeak-menu))
 
 (provide 'netspeak)
 
