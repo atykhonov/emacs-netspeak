@@ -73,11 +73,42 @@ text. Return parsed suggestions."
   (with-temp-buffer
     (insert response)
     (goto-char (point-min))
-    (let ((current-point (point)))
-      (while (re-search-forward "\t" nil t 2)
+    (let ((current-point (point))
+          (rate nil)
+          (rates (list))
+          (total 0)
+          (longest-line 0)
+          (first-persent-pos nil))
+      (while (re-search-forward "\t" nil t 1)
         (kill-region current-point (point))
+        (setq current-point (point))
+        (re-search-forward "\t" nil t)
+        (setq rate
+              (string-to-int
+               (netspeak--trim-string
+                (buffer-substring-no-properties current-point (point)))))
+        (setq rates (add-to-list 'rates rate t))
+        (kill-region current-point (point))
+        (end-of-line)
+        (when (> (- (line-end-position) (line-beginning-position)) longest-line)
+          (setq longest-line (- (line-end-position) (line-beginning-position))))
+        (message "Longest line: %s" longest-line)
         (beginning-of-line 2)
-        (setq current-point (point))))
+        (setq current-point (point)))
+      (beginning-of-buffer)
+      (setq total (apply '+ rates))
+      (while rates
+        (setq rate (pop rates))
+        (end-of-line)
+        (setq spaces (- longest-line (- (line-end-position) (line-beginning-position))))
+        (insert (format "  %s%s" (make-string spaces ? ) (netspeak--commify rate)))
+        (insert "  ")
+        (when (null first-persent-pos)
+          (setq first-persent-pos (- (line-end-position) (line-beginning-position))))
+        (while (< (- (line-end-position) (line-beginning-position)) first-persent-pos)
+          (insert " "))
+        (insert (format "%s%%" (/ (* rate 100) total)))
+        (end-of-line 2)))
     (buffer-string)))    
 
 (defun netspeak--request (query)
@@ -132,6 +163,17 @@ suggestions."
           (insert "(no suggestions found)")
         (insert response)))))
 
+(defun netspeak--commify (n &optional comma-char)
+  (unless comma-char (setq comma-char ","))
+  (with-temp-buffer
+    (insert (format "%s" n))
+    (while (> (- (point)
+                 (line-beginning-position))
+              (if (>= n 0) 3 4))
+      (backward-char 3)
+      (insert comma-char)
+      (backward-char 1))
+    (buffer-string)))
 
 
 (provide 'netspeak)
