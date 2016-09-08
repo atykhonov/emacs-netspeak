@@ -106,17 +106,32 @@ point."
                           nil nil nil query t)))
 
 (defun netspeak-query ()
-  "Queries the query and shows a buffer with suggestions."
+  "Make the query and show a buffer with the suggestions."
   (interactive)
-  (let* ((buffer-name "*Netspeak*")
-         (query (netspeak--read-from-minibuffer))
+  (let* ((query (netspeak--read-from-minibuffer))
          (response (netspeak--request query)))
+    (netspeak--show-response response)))
+
+(defun netspeak-query-line ()
+  "Take the current line, make query and show the buffer with
+suggestions."
+  (interactive)
+  (let* ((line-bos (line-beginning-position))
+         (line-eos (line-end-position))
+         (query (buffer-substring-no-properties line-bos line-eos))
+         (response (netspeak--request query)))
+    (netspeak--show-response response)))
+
+(defun netspeak--show-response (response)
+  "Output response in the buffer."
+  (let ((buffer-name "*Netspeak*"))
     (with-output-to-temp-buffer buffer-name
       (set-buffer buffer-name)
       (insert (format "Netspeak's suggestions for \"%s\":\n\n" query))
       (if (string= response "")
           (insert "(no suggestions found)")
-        (insert response)))))        
+        (insert response)))))
+
 
 
 (provide 'netspeak)
